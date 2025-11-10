@@ -1,5 +1,5 @@
-import { createServer } from 'node:http';
 import { config } from 'dotenv';
+import { createServer } from 'node:http';
 import { usersRouter } from './users.router.js';
 
 config();
