@@ -7,121 +7,140 @@ import {
   validatePartialUser,
 } from './users.service.js';
 import { isValidUUID } from './utils/isValidUUID.js';
+import { parseRequestBody } from './utils/parseRequestBody.js';
+import { sendJson, sendError, sendNoContent } from './utils/response.js';
 
+/**
+ * Extracts user ID from URL path
+ * @param {string} url - Request URL
+ * @returns {string|null} User ID or null
+ */
+const extractUserId = (url) => {
+  const params = url.split('/').filter(Boolean);
+  return params[2] || null;
+};
+
+/**
+ * Validates user ID and returns user if exists
+ * @param {string} id - User ID
+ * @param {import('http').ServerResponse} res - Response object
+ * @returns {Promise<Object|null>} User object or null if validation fails
+ */
+const validateAndGetUser = async (id, res) => {
+  if (!isValidUUID(id)) {
+    sendError(res, 400, 'Invalid id');
+    return null;
+  }
+
+  const user = await getOne(id);
+  if (!user) {
+    sendError(res, 404, 'User not found');
+    return null;
+  }
+
+  return user;
+};
+
+/**
+ * Handles GET all users request
+ */
+const handleGetAllUsers = async (req, res) => {
+  const users = await getAll();
+  sendJson(res, 200, users);
+};
+
+/**
+ * Handles GET single user request
+ */
+const handleGetUser = async (req, res, id) => {
+  const user = await validateAndGetUser(id, res);
+  if (user) {
+    sendJson(res, 200, user);
+  }
+};
+
+/**
+ * Handles POST create user request
+ */
+const handleCreateUser = async (req, res) => {
+  try {
+    const newUser = await parseRequestBody(req);
+    const errors = validateUser(newUser);
+    
+    if (errors.length) {
+      sendError(res, 400, errors.join(', '));
+      return;
+    }
+
+    const user = await createOne(newUser);
+    sendJson(res, 201, user);
+  } catch (error) {
+    sendError(res, 400, 'User is invalid');
+  }
+};
+
+/**
+ * Handles PUT update user request
+ */
+const handleUpdateUser = async (req, res, id) => {
+  const user = await validateAndGetUser(id, res);
+  if (!user) return;
+
+  try {
+    const parsedUser = await parseRequestBody(req);
+    const errors = validatePartialUser(parsedUser);
+    
+    if (errors.length) {
+      sendError(res, 400, errors.join(', '));
+      return;
+    }
+
+    const updatedUser = await updateOne(id, parsedUser);
+    sendJson(res, 200, updatedUser);
+  } catch (error) {
+    sendError(res, 400, 'User is invalid');
+  }
+};
+
+/**
+ * Handles DELETE user request (soft delete)
+ */
+const handleDeleteUser = async (req, res, id) => {
+  const user = await validateAndGetUser(id, res);
+  if (!user) return;
+
+  await updateOne(id, { isDeleted: true });
+  sendNoContent(res);
+};
+
+/**
+ * Main router for /api/users endpoints
+ */
 export const usersRouter = async (req, res) => {
-  const params = req.url.split('/').filter(Boolean);
-  console.log(params);
-  const id = params[2];
+  const id = extractUserId(req.url);
+  const { method } = req;
 
-  if (req.method === 'DELETE' && id) {
-    if (!isValidUUID(id)) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ message: 'Invalid id' }));
-      return;
-    }
-
-    const exists = await getOne(id);
-    if (!exists) {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ message: 'User not found' }));
-      return;
-    }
-
-    await updateOne(id, { isDeleted: true });
-    res.writeHead(204);
-    res.end();
-    return;
+  // Route to specific handlers
+  if (method === 'GET' && !id) {
+    return handleGetAllUsers(req, res);
   }
 
-  if (req.method === 'PUT' && id) {
-    if (!isValidUUID(id)) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ message: 'Invalid id' }));
-      return;
-    }
-
-    const exists = await getOne(id);
-    if (!exists) {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ message: 'User not found' }));
-      return;
-    }
-
-    let body = '';
-
-    req.on('data', (chunk) => {
-      body += chunk.toString();
-    });
-
-    req.on('end', async () => {
-      let parsedUser = null;
-      try {
-        parsedUser = JSON.parse(body);
-        const errors = validatePartialUser(parsedUser);
-        if (errors.length) {
-          throw new Error(errors.join(', '));
-        }
-      } catch (e) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ message: 'User is invalid' }));
-        return;
-      }
-
-      const user = await updateOne(id, { ...parsedUser });
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(user));
-    });
+  if (method === 'GET' && id) {
+    return handleGetUser(req, res, id);
   }
 
-  if (req.method === 'POST') {
-    let body = '';
-
-    req.on('data', (chunk) => {
-      body += chunk.toString();
-    });
-
-    req.on('end', async () => {
-      let newUser = null;
-      try {
-        newUser = JSON.parse(body);
-        const errors = validateUser(newUser);
-        if (errors.length) {
-          throw new Error(errors.join(', '));
-        }
-      } catch (e) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ message: 'User is invalid' }));
-        return;
-      }
-      const user = await createOne({ ...newUser });
-      res.writeHead(201, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(user));
-    });
-    return;
+  if (method === 'POST' && !id) {
+    return handleCreateUser(req, res);
   }
 
-  if (req.method === 'GET' && id) {
-    if (!isValidUUID(id)) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ message: 'Invalid id' }));
-      return;
-    }
-    const user = await getOne(id);
-
-    if (!user) {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ message: 'User not found' }));
-      return;
-    }
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(user));
-    return;
+  if (method === 'PUT' && id) {
+    return handleUpdateUser(req, res, id);
   }
 
-  if (req.method === 'GET') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    const users = await getAll();
-    res.end(JSON.stringify(users));
-    return;
+  if (method === 'DELETE' && id) {
+    return handleDeleteUser(req, res, id);
   }
+
+  // No matching route
+  sendError(res, 404, 'Route not found');
 };

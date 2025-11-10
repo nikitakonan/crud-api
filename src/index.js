@@ -1,27 +1,38 @@
 import { config } from 'dotenv';
 import { createServer } from 'node:http';
 import { usersRouter } from './users.router.js';
+import { sendError } from './utils/response.js';
 
+// Load environment variables
 config();
 
-const server = createServer(async (req, res) => {
-  console.log(req.url);
+/**
+ * Main request handler
+ * @param {import('http').IncomingMessage} req - Incoming request
+ * @param {import('http').ServerResponse} res - Server response
+ */
+const requestHandler = async (req, res) => {
+  console.log(`${req.method} ${req.url}`);
 
   try {
+    // Route to users API
     if (/^\/api\/users/.test(req.url)) {
       return await usersRouter(req, res);
     }
 
-    res.setHeader('Content-Type', 'application/json');
-    res.writeHead(404);
-    res.end(JSON.stringify({ message: 'Not found' }));
+    // 404 for unmatched routes
+    sendError(res, 404, 'Not found');
   } catch (error) {
-    res.setHeader('Content-Type', 'application/json');
-    res.writeHead(500);
-    res.end(JSON.stringify({ message: error.message }));
+    console.error('Server error:', error);
+    sendError(res, 500, error.message || 'Internal server error');
   }
-});
+};
 
-server.listen(process.env.PORT, () => {
-  console.log(`Server running at PORT ${process.env.PORT}`);
+// Create and start server
+const server = createServer(requestHandler);
+
+const PORT = process.env.PORT || 3000;
+
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
