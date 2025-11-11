@@ -31,8 +31,13 @@ const requestHandler = async (req, res) => {
 // Create and start server
 const server = createServer(requestHandler);
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
+const WORKER_ID = process.env.WORKER_ID || 'single';
 
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  if (WORKER_ID === 'single') {
+    console.log(`Server running on port ${PORT}`);
+  } else {
+    console.log(`Worker ${WORKER_ID} (PID: ${process.pid}) running on port ${PORT}`);
+  }
 });

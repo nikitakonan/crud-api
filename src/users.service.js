@@ -1,24 +1,63 @@
 import { randomUUID } from 'node:crypto';
+import cluster from 'node:cluster';
 
 /**
  * In-memory user storage
  * @type {Array<{id: string, username: string, age: number, hobbies: string[], isDeleted?: boolean}>}
  */
-const _mockUsers = [
-  {
-    id: randomUUID(),
-    username: 'Leanne Graham',
-    age: 100,
-    hobbies: ['Volleyball'],
-  },
-  {
-    id: randomUUID(),
-    username: 'Ervin Howell',
-    age: 100,
-    hobbies: ['Robots', 'Maths'],
-  },
-  { id: randomUUID(), username: 'Clementine Bauch', age: 100, hobbies: [] },
-];
+const _mockUsers = [];
+
+/**
+ * Sends state change message to master process (if in cluster mode)
+ * @param {string} type - Message type
+ * @param {Object} data - Message data
+ */
+const notifyMaster = (type, data) => {
+  if (cluster.isWorker && process.send) {
+    process.send({ type, data });
+  }
+};
+
+/**
+ * Handles state sync messages from master
+ */
+if (cluster.isWorker) {
+  process.on('message', (message) => {
+    if (!message || !message.type) return;
+
+    switch (message.type) {
+      case 'SYNC_CREATE':
+        // Add user if not already present
+        const existingCreateIndex = _mockUsers.findIndex((u) => u.id === message.data.id);
+        if (existingCreateIndex === -1) {
+          _mockUsers.push(message.data);
+        }
+        break;
+
+      case 'SYNC_UPDATE':
+        // Update user
+        const updateIndex = _mockUsers.findIndex((u) => u.id === message.data.id);
+        if (updateIndex !== -1) {
+          _mockUsers[updateIndex] = message.data;
+        }
+        break;
+
+      case 'SYNC_DELETE':
+        // Mark user as deleted
+        const deleteIndex = _mockUsers.findIndex((u) => u.id === message.data.id);
+        if (deleteIndex !== -1) {
+          _mockUsers[deleteIndex] = { ..._mockUsers[deleteIndex], isDeleted: true };
+        }
+        break;
+
+      case 'SYNC_ALL':
+        // Replace entire state (for new workers)
+        _mockUsers.length = 0;
+        _mockUsers.push(...message.data);
+        break;
+    }
+  });
+}
 
 /**
  * Validates partial user data for updates
@@ -127,6 +166,10 @@ export const getOne = async (id) => {
 export const createOne = async (user) => {
   const newUser = { id: randomUUID(), ...user };
   _mockUsers.push(newUser);
+  
+  // Notify master of state change
+  notifyMaster('CREATE_USER', newUser);
+  
   return newUser;
 };
 
@@ -139,13 +182,20 @@ export const createOne = async (user) => {
  */
 export const updateOne = async (id, userData) => {
   const index = _mockUsers.findIndex((user) => user.id === id);
-  
+
   if (index === -1) {
     throw new Error('User not found');
   }
 
   _mockUsers[index] = { ..._mockUsers[index], ...userData };
-  
+
+  // Notify master of state change
+  if (userData.isDeleted) {
+    notifyMaster('DELETE_USER', { id });
+  } else {
+    notifyMaster('UPDATE_USER', _mockUsers[index]);
+  }
+
   // Return user without isDeleted flag if it's a soft delete
   const { isDeleted, ...rest } = _mockUsers[index];
   return userData.isDeleted ? _mockUsers[index] : rest;
